@@ -304,7 +304,7 @@ const analyzeReverseGeocodeLandUse = (payload = {}) => {
     source: "reverse-geocode",
     isAgricultureAvailable: true,
     classification: "unknown",
-    summary: "Reverse geocoding did not detect water or urban land at this coordinate."
+    summary: "geoai.apiSummary.notes.reverseGeocodeNoDetection"
   };
 };
 
@@ -458,9 +458,18 @@ router.post("/analyze", async (req, res) => {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          site: { lat, lon },
-          constraints: derivedConstraints,
-          soil_test: derivedSoilTest,
+          site: {
+            lat: lat,
+            lon: lon,
+            radius_m: 500
+          },
+          constraints: {
+            country: "TN"
+          },
+          soil_test: derivedSoilTest?.ph ? {
+            ph: parseFloat(derivedSoilTest.ph),
+            ec_dS_m: derivedSoilTest?.ec ? parseFloat(derivedSoilTest.ec) : null
+          } : null
         }),
         signal: controller.signal,
       });
