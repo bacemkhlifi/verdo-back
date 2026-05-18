@@ -8,6 +8,10 @@ const { promisify } = require("util");
 const authRoutes = require("./routes/auth");
 const rolesRoutes = require("./routes/roles");
 const geoAiRoutes = require("./routes/geoai");
+const landsRoutes = require("./routes/lands");
+const investmentsRoutes = require("./routes/investments");
+const adminRoutes = require("./routes/admin");
+const visitorsRoutes = require("./routes/visitors");
 
 dotenv.config();
 const execFileAsync = promisify(execFile);
@@ -15,40 +19,52 @@ const execFileAsync = promisify(execFile);
 const app = express();
 const PORT = process.env.PORT || 5000;
 const allowedOrigins = new Set(
-[
-  process.env.CLIENT_URL,
-  "http://localhost:5173",
-  "http://localhost:8080",
-  "http://127.0.0.1:5173",
-  "http://127.0.0.1:8080",
-].filter(Boolean)
+  [
+    process.env.CLIENT_URL,
+    "http://localhost:5173",
+    "http://localhost:8080",
+    "http://127.0.0.1:5173",
+    "http://127.0.0.1:8080",
+  ].filter(Boolean)
 );
 
 // Middleware
 app.use(
-cors({
-  origin(origin, callback) {
-    if (!origin || allowedOrigins.has(origin)) {
-      return callback(null, true);
-    }
+  cors({
+    origin(origin, callback) {
+      if (!origin || allowedOrigins.has(origin)) {
+        return callback(null, true);
+      }
 
-    return callback(new Error(`Origin ${origin} is not allowed by CORS`));
-  },
-  credentials: true,
-})
+      return callback(new Error(`Origin ${origin} is not allowed by CORS`));
+    },
+    credentials: true,
+  })
 );
 app.use(express.json());
 app.use(cookieParser());
 
 // Root route
 app.get("/", (req, res) => {
-res.send("Verdolive API is running");
+  res.send("Verdolive API is running");
 });
 
 // API Routes
 app.use("/api/auth", authRoutes);
 app.use("/api/roles", rolesRoutes);
 app.use("/api/geoai", geoAiRoutes);
+app.use("/api/lands", landsRoutes);
+app.use("/api/investments", investmentsRoutes);
+app.use("/api/admin", adminRoutes);
+app.use("/api/visitors", visitorsRoutes);
+
+app.use((err, req, res, next) => {
+  const statusCode = err.statusCode || 500;
+  res.status(statusCode).json({
+    success: false,
+    message: err.message || "Server error",
+  });
+});
 
 const isSrvMongoUri = (uri) => uri.startsWith("mongodb+srv://");
 

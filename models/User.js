@@ -40,6 +40,10 @@ const UserSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Role'
   }],
+  active: {
+    type: Boolean,
+    default: true
+  },
   resetPasswordToken: String,
   resetPasswordExpire: Date,
   createdAt: {
@@ -50,7 +54,7 @@ const UserSchema = new mongoose.Schema({
 
 UserSchema.pre('save', async function(next) {
   if (!this.isModified('password')) {
-    next();
+    return next();
   }
   
   const salt = await bcrypt.genSalt(10);
@@ -79,7 +83,7 @@ UserSchema.methods.getPermissions = function() {
     return [
       'manage_users',
       'manage_roles',
-      'manage_products',
+      'manage_lands',
       'manage_investments',
       'view_dashboard',
       'view_reports',
