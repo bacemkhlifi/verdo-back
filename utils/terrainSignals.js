@@ -10,13 +10,14 @@ const fetchJson = async (url, timeoutMs = TIMEOUT_MS) => {
     if (!response.ok) {
       throw new Error(`status ${response.status}`);
     }
-    return response.json();
+    return await response.json();
   } finally {
     clearTimeout(timer);
   }
 };
 
 const toNumber = (value) => {
+  if (value === null || value === undefined || value === "") return null;
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
 };
@@ -77,10 +78,11 @@ const calculateSlopePercent = async (lat, lon, offsetDegrees = 0.002) => {
       ? (east - west) / eastWestDistance
       : null;
 
-  const maxGradient = Math.max(
-    Math.abs(nsGradient ?? 0),
-    Math.abs(ewGradient ?? 0)
-  );
+  if (nsGradient === null || ewGradient === null) {
+    return { provider: "open-meteo", elevationMeters: center, slopePercent: null, slopeDegrees: null, aspect: null,
+      dataSources: ["Open-Meteo Elevation"], notes: ["Slope unavailable: surrounding elevation samples are incomplete."] };
+  }
+  const maxGradient = Math.hypot(nsGradient, ewGradient);
 
   const slopeDegrees = Math.atan(maxGradient) * (180 / Math.PI);
   const slopePercent = maxGradient * 100;

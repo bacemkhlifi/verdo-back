@@ -13,13 +13,14 @@ const fetchJson = async (url, timeoutMs = TIMEOUT_MS) => {
     if (!response.ok) {
       throw new Error(`status ${response.status}`);
     }
-    return response.json();
+    return await response.json();
   } finally {
     clearTimeout(timer);
   }
 };
 
 const toNumber = (value) => {
+  if (value === null || value === undefined || value === "") return null;
   const number = Number(value);
   if (!Number.isFinite(number) || number <= -900) {
     return null;
@@ -79,7 +80,7 @@ const getNasaPowerSignals = async (lat, lon) => {
       "T2M",
       "T2M_MAX",
       "T2M_MIN",
-      "PRECTOT",
+      "PRECTOTCORR",
       "RH2M",
       "ALLSKY_SFC_SW_DWN",
       "WS10M",
@@ -101,14 +102,19 @@ const getNasaPowerSignals = async (lat, lon) => {
   const temperature = parseParameterSeries(parameterMap, "T2M");
   const temperatureMax = parseParameterSeries(parameterMap, "T2M_MAX");
   const temperatureMin = parseParameterSeries(parameterMap, "T2M_MIN");
-  const rainfall = parseParameterSeries(parameterMap, "PRECTOT");
+  const rainfallRates = parseParameterSeries(parameterMap, "PRECTOTCORR");
+  const daysInMonth = [31, 28.25, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  const rainUnits = payload?.parameters?.PRECTOTCORR?.units;
+  const rainfall = rainUnits === "mm/day" ? rainfallRates.map(item => ({
+    ...item, value: item.value * daysInMonth[MONTHS.indexOf(item.month)],
+  })) : [];
   const humidity = parseParameterSeries(parameterMap, "RH2M");
   const solar = parseParameterSeries(parameterMap, "ALLSKY_SFC_SW_DWN");
   const wind = parseParameterSeries(parameterMap, "WS10M");
   const pressure = parseParameterSeries(parameterMap, "PS");
   const dewPoint = parseParameterSeries(parameterMap, "T2MDEW");
 
-  const annualRainMm = sum(rainfall.map((item) => item.value));
+  const annualRainMm = rainfall.length === 12 ? sum(rainfall.map((item) => item.value)) : null;
   const meanTempC = average(temperature.map((item) => item.value));
   const hottestMonth = maxEntry(temperatureMax);
   const coldestMonth = minEntry(temperatureMin);

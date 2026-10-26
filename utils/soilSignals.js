@@ -1,4 +1,4 @@
-const SOILGRIDS_WMS_URL = "https://maps.isric.org/mapserv";
+const SOILGRIDS_WMS_URL = "https://maps.isric.org/mapserv/phh2o";
 const SOILGRIDS_MAP = "/map/phh2o.map";
 const TIMEOUT_MS = 12000;
 
@@ -11,7 +11,7 @@ const fetchText = async (url, timeoutMs = TIMEOUT_MS) => {
     if (!response.ok) {
       throw new Error(`status ${response.status}`);
     }
-    return response.text();
+    return await response.text();
   } finally {
     clearTimeout(timer);
   }
@@ -26,7 +26,6 @@ const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
 
 const buildCapabilitiesUrl = () => {
   const url = new URL(SOILGRIDS_WMS_URL);
-  url.searchParams.set("map", SOILGRIDS_MAP);
   url.searchParams.set("SERVICE", "WMS");
   url.searchParams.set("VERSION", "1.1.1");
   url.searchParams.set("REQUEST", "GetCapabilities");
@@ -41,7 +40,6 @@ const buildFeatureInfoUrl = ({ layerName, lat, lon }) => {
   const maxLat = clamp(lat + delta, -89.9999, 89.9999);
 
   const url = new URL(SOILGRIDS_WMS_URL);
-  url.searchParams.set("map", SOILGRIDS_MAP);
   url.searchParams.set("SERVICE", "WMS");
   url.searchParams.set("VERSION", "1.1.1");
   url.searchParams.set("REQUEST", "GetFeatureInfo");
@@ -75,9 +73,10 @@ const parseSoilValue = (text) => {
     .filter(Boolean);
 
   const extractLineValue = (line) => {
-    const matches = [...line.matchAll(/(-?\d+(?:\.\d+)?)/g)].map((match) => toNumber(match[1]));
-    const candidates = matches.filter((value) => Number.isFinite(value) && value > 0 && value < 14);
-    return candidates.length ? candidates[candidates.length - 1] : null;
+    const match = line.match(/^\s*(?:value|value_0|pixel|band_?1|phh2o[^=:\s]*)\s*[:=]\s*['"]?(-?\d+(?:\.\d+)?)/i);
+    if (!match) return null;
+    const raw = toNumber(match[1]);
+    return Number.isFinite(raw) && raw >= 30 && raw <= 105 ? raw / 10 : null;
   };
 
   for (const line of lines) {
