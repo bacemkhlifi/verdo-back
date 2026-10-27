@@ -1,4 +1,6 @@
 const express = require("express");
+const { checkLocation } = require("../utils/landUse");
+const { validatePoint } = require("../utils/parcel");
 const jwt = require("jsonwebtoken");
 const Analysis = require("../models/Analysis");
 const { validateInput, analyzeSite } = require("../utils/siteAnalysis");
@@ -20,45 +22,59 @@ function createRouter(deps = {}) {
   const run = deps.analyzeSite || analyzeSite;
   const store = deps.Analysis || Analysis;
   const getIdentity = deps.identity || identity;
-  const buckets = new Map();
-  const limit = (req, res, next) => {
-    const key = req.analysisUserId || req.ip || "unknown",
-      now = Date.now();
-    const bucket = buckets.get(key);
-    if (bucket && now - bucket.start < 60000 && bucket.count >= 10)
-      return res
-        .status(429)
-        .json({
+  const rateLimit = (maximum) => {
+    const buckets = new Map();
+    return (req, res, next) => {
+      const key = req.analysisUserId || req.ip || "unknown",
+        now = Date.now();
+      const bucket = buckets.get(key);
+      if (bucket && now - bucket.start < 60000 && bucket.count >= maximum)
+        return res.status(429).json({
           success: false,
           code: "RATE_LIMITED",
           message: "Please wait before running another analysis.",
         });
-    if (!bucket || now - bucket.start >= 60000) {
-      if (buckets.size >= 1000) buckets.delete(buckets.keys().next().value);
-      buckets.set(key, { start: now, count: 1 });
-    } else bucket.count++;
-    next();
+      if (!bucket || now - bucket.start >= 60000) {
+        if (buckets.size >= 1000) buckets.delete(buckets.keys().next().value);
+        buckets.set(key, { start: now, count: 1 });
+      } else bucket.count++;
+      next();
+    };
   };
+  const limit = rateLimit(10);
+  const locationLimit = rateLimit(60);
+  router.post("/location-check", locationLimit, async (req, res) => {
+    const { lat, lon } = req.body || {};
+    try {
+      validatePoint(lat, lon);
+    } catch (error) {
+      return res.status(400).json({ success: false, code: error.message });
+    }
+    try {
+      const result = await (deps.checkLocation || checkLocation)(lat, lon);
+      return res.json({ success: true, result });
+    } catch {
+      return res
+        .status(503)
+        .json({ success: false, code: "LOCATION_CHECK_UNAVAILABLE" });
+    }
+  });
   const auth = (required) => (req, res, next) => {
     try {
       req.analysisUserId = getIdentity(req);
       if (required && !req.analysisUserId)
-        return res
-          .status(401)
-          .json({
-            success: false,
-            code: "AUTH_REQUIRED",
-            message: "Please sign in to view your analyses.",
-          });
-      next();
-    } catch {
-      res
-        .status(401)
-        .json({
+        return res.status(401).json({
           success: false,
           code: "AUTH_REQUIRED",
-          message: "Your session has expired. Please sign in again.",
+          message: "Please sign in to view your analyses.",
         });
+      next();
+    } catch {
+      res.status(401).json({
+        success: false,
+        code: "AUTH_REQUIRED",
+        message: "Your session has expired. Please sign in again.",
+      });
     }
   };
   router.post("/analyze", auth(false), limit, async (req, res) => {
@@ -66,13 +82,11 @@ function createRouter(deps = {}) {
     try {
       input = validateInput(req.body);
     } catch (error) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          code: error.message,
-          message: "Please check the location, parcel and analysis inputs.",
-        });
+      return res.status(400).json({
+        success: false,
+        code: error.message,
+        message: "Please check the location, parcel and analysis inputs.",
+      });
     }
     try {
       const result = await run(input);
@@ -97,26 +111,22 @@ function createRouter(deps = {}) {
       return res.json({ success: true, analysisId, saveWarning, result });
     } catch (error) {
       console.error("GeoAI analysis failed:", error.name);
-      res
-        .status(502)
-        .json({
-          success: false,
-          code: "ANALYSIS_UNAVAILABLE",
-          message: "The analysis could not be completed. Please try again.",
-        });
+      res.status(502).json({
+        success: false,
+        code: "ANALYSIS_UNAVAILABLE",
+        message: "The analysis could not be completed. Please try again.",
+      });
     }
   });
   router.post("/estimate", limit, (req, res) => {
     try {
       res.json({ success: true, result: calculateEstimate(req.body) });
     } catch (error) {
-      res
-        .status(400)
-        .json({
-          success: false,
-          code: error.message,
-          message: "Complete the financial assumptions and quotation source.",
-        });
+      res.status(400).json({
+        success: false,
+        code: error.message,
+        message: "Complete the financial assumptions and quotation source.",
+      });
     }
   });
   router.get("/history", auth(true), async (req, res) => {
@@ -133,13 +143,11 @@ function createRouter(deps = {}) {
         .lean();
       res.json({ success: true, data, page, pageSize: 20 });
     } catch {
-      res
-        .status(500)
-        .json({
-          success: false,
-          code: "HISTORY_UNAVAILABLE",
-          message: "Unable to load your saved analyses.",
-        });
+      res.status(500).json({
+        success: false,
+        code: "HISTORY_UNAVAILABLE",
+        message: "Unable to load your saved analyses.",
+      });
     }
   });
   return router;

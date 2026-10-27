@@ -5,6 +5,7 @@ const { calculateSlopePercent } = require("./terrainSignals");
 const { getSoilSignals } = require("./soilSignals");
 const { getCropRecommendations } = require("./cropSuitability");
 const { validatePoint, parcelFacts } = require("./parcel");
+const { checkLocation, classifyLandUse } = require("./landUse");
 
 const number = (value) =>
   typeof value === "number" && Number.isFinite(value) ? value : null;
@@ -71,75 +72,6 @@ async function cached(key, fetcher, ttl) {
     caches.set(key, { value, expires: Date.now() + ttl });
   }
   return value;
-}
-function classifyLandUse(payload, lat, lon) {
-  // Nearby map features are context, not evidence of parcel intersection.
-  const tags = (payload?.elements || []).map((x) => x.tags || {});
-  const contains = (element) => {
-    const g = element.geometry;
-    if (
-      !Number.isFinite(lat) ||
-      !Number.isFinite(lon) ||
-      !Array.isArray(g) ||
-      g.length < 4 ||
-      g[0].lat !== g.at(-1).lat ||
-      g[0].lon !== g.at(-1).lon
-    )
-      return false;
-    let inside = false;
-    for (let i = 0, j = g.length - 1; i < g.length; j = i++)
-      if (
-        g[i].lat > lat !== g[j].lat > lat &&
-        lon <
-          ((g[j].lon - g[i].lon) * (lat - g[i].lat)) / (g[j].lat - g[i].lat) +
-            g[i].lon
-      )
-        inside = !inside;
-    return inside;
-  };
-  const overlapping = (payload?.elements || [])
-    .filter(contains)
-    .map((e) => e.tags || {});
-  const water = overlapping.some(
-    (t) =>
-      t.natural === "water" ||
-      t.water ||
-      ["reservoir", "basin", "salt_pond"].includes(t.landuse),
-  );
-  const building = overlapping.some(
-    (t) =>
-      (t.building && t.building !== "no") ||
-      ["residential", "industrial", "commercial", "retail"].includes(t.landuse),
-  );
-  const classification = water ? "water" : building ? "built_up" : "unknown";
-  return {
-    classification,
-    isAgricultureAvailable: water || building ? false : null,
-    source: "openstreetmap",
-    nearbyBuildings: tags.filter((t) => t.building && t.building !== "no")
-      .length,
-    nearbyWater: tags.some(
-      (t) => t.natural === "water" || t.waterway || t.natural === "coastline",
-    ),
-    summary:
-      "Nearby map features are contextual. Parcel land use and legal availability require verification.",
-  };
-}
-async function getLandUse(lat, lon) {
-  const query = `[out:json][timeout:5];is_in(${lat},${lon})->.areas;(way(around:80,${lat},${lon})[building];way(around:80,${lat},${lon})[natural=water];way(around:80,${lat},${lon})[landuse];way(pivot.areas)[landuse];way(pivot.areas)[building];way(pivot.areas)[natural=water];);out tags geom;`;
-  return classifyLandUse(
-    await fetchJson(
-      "https://overpass-api.de/api/interpreter",
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({ data: query }).toString(),
-      },
-      7000,
-    ),
-    lat,
-    lon,
-  );
 }
 function upstreamRequest(input) {
   return {
@@ -312,20 +244,31 @@ function assembleAnalysis(input, signals, statuses) {
             : "insufficient_data",
       confidence: "low",
     },
-    analysisWarning: !external ? "EXTERNAL_UNAVAILABLE" : null,
+    analysisWarning:
+      !external && landUse?.isAgricultureAvailable !== false
+        ? "EXTERNAL_UNAVAILABLE"
+        : null,
     scope:
       "Point-based screening, not parcel certification. Suitability scores are rule indices, not success probabilities.",
-    nextActions: [
-      "rootZoneSoil",
-      "waterVolume",
-      "waterQuality",
-      "fieldVerification",
-    ],
+    nextActions:
+      landUse?.isAgricultureAvailable === false
+        ? ["selectDifferentLocation"]
+        : ["rootZoneSoil", "waterVolume", "waterQuality", "fieldVerification"],
     providerStatuses: statuses,
     risks: external?.risks || [],
   };
 }
-async function analyzeSite(input) {
+async function analyzeSite(input, locationCheck = checkLocation) {
+  const started = Date.now();
+  const landUse = await locationCheck(input.lat, input.lon);
+  const landStatus = {
+    provider: "landUse",
+    status: landUse.status || "available",
+    durationMs: Date.now() - started,
+  };
+  // Stop before climate/soil/AI providers for confirmed non-land points.
+  if (landUse.isAgricultureAvailable === false)
+    return assembleAnalysis(input, { landUse }, [landStatus]);
   const point = `${input.lat.toFixed(4)},${input.lon.toFixed(4)}`;
   const jobs = {
     openMeteo: () =>
@@ -353,15 +296,9 @@ async function analyzeSite(input) {
         86400000,
       ),
     external: () => getExternal(input),
-    landUse: () =>
-      cached(
-        "landuse:" + point,
-        () => getLandUse(input.lat, input.lon),
-        86400000,
-      ),
   };
-  const signals = {},
-    statuses = [];
+  const signals = { landUse },
+    statuses = [landStatus];
   await Promise.all(
     Object.entries(jobs).map(async ([provider, run]) => {
       const started = Date.now();
