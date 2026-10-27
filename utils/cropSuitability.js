@@ -14,6 +14,7 @@ const cropProfiles = {
     baseScore: 62,
   },
   almond: {
+    criticalChecks: ["winterChill", "springFrost", "pollination"],
     regionBands: ["north", "central"],
     soilPh: { accept: [6.0, 8.0], ideal: [6.4, 7.8] },
     slope: { accept: [0, 20], ideal: [0, 10] },
@@ -23,7 +24,7 @@ const cropProfiles = {
     coldestMonthMin: { accept: [-3, 12], ideal: [0, 8] },
     hottestMonthMax: { accept: [22, 46], ideal: [26, 40] },
     hotDays35: { accept: [0, 80], ideal: [5, 60] },
-    frostDays: { accept: [0, 15], ideal: [2, 10] },
+    frostDays: { accept: [0, 15], ideal: [0, 4] },
     waterNeed: "medium",
     baseScore: 60,
   },
@@ -42,6 +43,7 @@ const cropProfiles = {
     baseScore: 34,
   },
   pistachio: {
+    criticalChecks: ["winterChill", "springFrost", "pollination"],
     regionBands: ["north", "central", "south"],
     soilPh: { accept: [7.0, 8.6], ideal: [7.2, 8.3] },
     slope: { accept: [0, 18], ideal: [0, 10] },
@@ -51,9 +53,11 @@ const cropProfiles = {
     coldestMonthMin: { accept: [-5, 12], ideal: [0, 8] },
     hottestMonthMax: { accept: [28, 48], ideal: [32, 44] },
     hotDays35: { accept: [20, 120], ideal: [30, 90] },
-    frostDays: { accept: [0, 15], ideal: [2, 10] },
+    frostDays: { accept: [0, 15], ideal: [0, 4] },
     waterNeed: "low",
     baseScore: 56,
+    // Drought survival is not evidence of a sustainable commercial water budget.
+    commercialWaterCheck: true,
   },
   orange: {
     regionBands: ["north", "central"],

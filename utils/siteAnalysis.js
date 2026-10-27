@@ -6,6 +6,7 @@ const { getSoilSignals } = require("./soilSignals");
 const { getCropRecommendations } = require("./cropSuitability");
 const { validatePoint, parcelFacts } = require("./parcel");
 const { checkLocation, classifyLandUse } = require("./landUse");
+const { getClimateHistory } = require("./climateHistory");
 
 const number = (value) =>
   typeof value === "number" && Number.isFinite(value) ? value : null;
@@ -95,7 +96,7 @@ async function getExternal(input) {
     },
     Math.max(
       5000,
-      Math.min(30000, Number(process.env.GEOAI_TIMEOUT_MS) || 25000),
+      Math.min(30000, Number(process.env.GEOAI_TIMEOUT_MS) || 12000),
     ),
   );
   if (
@@ -105,20 +106,46 @@ async function getExternal(input) {
     !Array.isArray(result.recommendations)
   )
     throw new Error("INVALID_PROVIDER_RESPONSE");
+  if (
+    result.indicators.coverage &&
+    Object.values(result.indicators.coverage).some(
+      (v) => typeof v !== "number" || v !== 1,
+    )
+  )
+    throw new Error("INCOMPLETE_PROVIDER_HISTORY");
   return result;
 }
 function assembleAnalysis(input, signals, statuses) {
-  const { openMeteo, nasaPower, terrain, soil, external, landUse } = signals;
+  const {
+    openMeteo,
+    nasaPower,
+    terrain,
+    soil,
+    external,
+    landUse,
+    climateHistory,
+  } = signals;
   const upstream = external?.indicators || {};
+  const history = climateHistory?.indicators || {};
   const indicators = {
+    ...history,
     ...upstream,
     annual_rainfall_mm_est:
       number(upstream.annual_rainfall_mm_est) ??
+      number(history.annual_rainfall_mm_est) ??
       number(nasaPower?.climate?.annualRainMm),
     mean_temp_c_est:
       number(upstream.avg_tmean_c) ??
       number(upstream.mean_temp_c_est) ??
+      number(history.mean_temp_c_est) ??
       number(nasaPower?.climate?.meanTempC),
+    hot_days_ge_35_per_year_est:
+      number(upstream.hot_days_ge_35_per_year_est) ??
+      number(history.hot_days_ge_35_per_year_est),
+    frost_days_le_0_per_year_est:
+      number(upstream.frost_days_le_0_per_year_est) ??
+      number(history.frost_days_le_0_per_year_est),
+    date_range: upstream.date_range || history.date_range || null,
     aridity_class: String(
       upstream.aridity_class || nasaPower?.summary?.classification || "unknown",
     ).toLowerCase(),
@@ -128,6 +155,7 @@ function assembleAnalysis(input, signals, statuses) {
     slope = input.constraints.slope_max ?? number(terrain?.slopePercent);
   const apiInsights = {
     openMeteo,
+    climateHistory,
     nasaPower,
     terrain,
     soil,
@@ -195,7 +223,7 @@ function assembleAnalysis(input, signals, statuses) {
         ...crop.requirements,
         ...(upstreamCrop?.requirements || []),
       ],
-      provisional: ["fig", "pomegranate"].includes(crop.cropKey),
+      provisional: true,
     };
   });
   const priority = {
@@ -215,7 +243,7 @@ function assembleAnalysis(input, signals, statuses) {
   recommendations.sort(
     (a, b) =>
       priority[a.status] - priority[b.status] ||
-      (b.score ?? -1) - (a.score ?? -1),
+      a.cropKey.localeCompare(b.cropKey),
   );
   const hasClimate =
     number(indicators.annual_rainfall_mm_est) !== null &&
@@ -223,6 +251,14 @@ function assembleAnalysis(input, signals, statuses) {
   return {
     version: "feasibility-1",
     generatedAt: new Date().toISOString(),
+    screeningModelVersion: "tn-screening-2",
+    ranking: {
+      status: "not_established",
+      winner: null,
+      reason: "UNCALIBRATED_PROFILES",
+      scope:
+        "Preliminary crop screening only; no validated best crop or return prediction",
+    },
     site: { lat: input.lat, lon: input.lon },
     inputSnapshot: input,
     parcel: input.parcel,
@@ -328,6 +364,35 @@ async function analyzeSite(input, locationCheck = checkLocation) {
       }
     }),
   );
+  const externalIndicators = signals.external?.indicators || {};
+  if (
+    [
+      externalIndicators.annual_rainfall_mm_est,
+      externalIndicators.avg_tmean_c ?? externalIndicators.mean_temp_c_est,
+      externalIndicators.hot_days_ge_35_per_year_est,
+      externalIndicators.frost_days_le_0_per_year_est,
+    ].some((v) => number(v) === null)
+  ) {
+    const started = Date.now();
+    try {
+      signals.climateHistory = await cached(
+        "history:" + point,
+        () => getClimateHistory(input.lat, input.lon),
+        86400000,
+      );
+      statuses.push({
+        provider: "climateHistory",
+        status: "available",
+        durationMs: Date.now() - started,
+      });
+    } catch {
+      statuses.push({
+        provider: "climateHistory",
+        status: "unavailable",
+        durationMs: Date.now() - started,
+      });
+    }
+  }
   return assembleAnalysis(input, signals, statuses);
 }
 module.exports = {

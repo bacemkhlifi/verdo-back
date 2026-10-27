@@ -138,7 +138,7 @@ test("date palms with no water are excluded even with ideal climate", () => {
   assert.equal(c.status, "not_suitable");
   assert.ok(c.exclusions.includes("noWater"));
 });
-test("backend exclusion is retained and normalized scores do not saturate all candidates", () => {
+test("backend exclusion is retained while incomplete candidates cannot get a point score", () => {
   const r = assembleAnalysis(
     input(),
     {
@@ -154,7 +154,8 @@ test("backend exclusion is retained and normalized scores do not saturate all ca
     r.recommendations.find((c) => c.cropKey === "olive").status,
     "not_suitable",
   );
-  assert.ok(new Set(r.recommendations.map((c) => c.score)).size > 1);
+  assert.ok(r.recommendations.every((c) => c.score === null));
+  assert.equal(r.ranking.winner, null);
 });
 test("nearby buildings or water cannot establish point containment", () => {
   const result = classifyLandUse({

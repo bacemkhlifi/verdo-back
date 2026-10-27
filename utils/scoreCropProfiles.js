@@ -1,4 +1,4 @@
-// Screening index is normalized over known measurements; confidence is separate.
+// Fixed evidence basis: unknown factors stay unknown, never disappear from the denominator.
 function scoreCropProfiles(profiles, { form, result, apiInsights = {} }) {
   const num = (v) =>
     v === null || v === undefined || v === ""
@@ -45,7 +45,9 @@ function scoreCropProfiles(profiles, { form, result, apiInsights = {} }) {
   return Object.entries(profiles)
     .map(([cropKey, profile]) => {
       let total = 0,
-        weights = 0;
+        weights = 0,
+        expectedWeight = 0,
+        knownFactors = 0;
       const exclusions = [],
         missingInputs = [],
         reasons = [],
@@ -59,18 +61,21 @@ function scoreCropProfiles(profiles, { form, result, apiInsights = {} }) {
         ["frost", profile.frostDays, 10],
       ];
       for (const [key, range, weight] of factors) {
+        expectedWeight += weight;
         const value = context[key];
         if (value === null) {
           missingInputs.push(labels[key]);
+          reasons.push({ factor: key, value: null, status: "unknown" });
           continue;
         }
         const ideal = value >= range.ideal[0] && value <= range.ideal[1];
         const accepted = value >= range.accept[0] && value <= range.accept[1];
         const irrigatedRain =
-          key === "rain" && value < range.accept[0] && water === true;
+          key === "rain" && value < range.accept[0] && water !== false;
         const points = ideal ? 100 : accepted ? 75 : irrigatedRain ? 55 : 0;
         total += points * weight;
         weights += weight;
+        knownFactors++;
         reasons.push({
           factor: key,
           value,
@@ -94,21 +99,42 @@ function scoreCropProfiles(profiles, { form, result, apiInsights = {} }) {
           );
         if (irrigatedRain) requirements.push("waterVolume");
       }
-      if (context.salinity === null) missingInputs.push("waterSalinity");
-      else {
-        const ok = context.salinity <= profile.salinityMax;
-        total += (ok ? 100 : 0) * 15;
-        weights += 15;
-        if (!ok) exclusions.push("salinity");
+      if (water !== false) {
+        expectedWeight += 15;
+        if (context.salinity === null) {
+          missingInputs.push("waterSalinity");
+          reasons.push({ factor: "salinity", value: null, status: "unknown" });
+        } else {
+          const ok = context.salinity <= profile.salinityMax;
+          total += (ok ? 100 : 0) * 15;
+          weights += 15;
+          knownFactors++;
+          reasons.push({
+            factor: "salinity",
+            value: context.salinity,
+            status: ok ? "acceptable" : "outside_range",
+          });
+          if (!ok) exclusions.push("salinity");
+        }
       }
-      if (!profile.regionBands.includes(region)) exclusions.push("region");
+      // Latitude bands are contextual hints, not crop exclusion boundaries.
+      if (!profile.regionBands.includes(region))
+        missingInputs.push("localAdaptation");
       if (water === false && profile.waterNeed === "high")
         exclusions.push("noWater");
       if (water === null) missingInputs.push("waterAccess");
-      if (profile.waterNeed !== "low") requirements.push("waterVolume");
+      const criticalMissing = [...(profile.criticalChecks || [])];
+      missingInputs.push(...criticalMissing);
+      if (profile.waterNeed !== "low" || profile.commercialWaterCheck)
+        requirements.push("waterVolume");
       const climateKnown = context.rain !== null && context.temp !== null;
       const score =
-        climateKnown && weights ? Math.round(total / weights) : null;
+        climateKnown &&
+        weights === expectedWeight &&
+        !exclusions.length &&
+        !criticalMissing.length
+          ? Math.round(total / expectedWeight)
+          : null;
       const status = exclusions.length
         ? "not_suitable"
         : !climateKnown
@@ -118,6 +144,25 @@ function scoreCropProfiles(profiles, { form, result, apiInsights = {} }) {
         cropKey,
         activity: `${cropKey.replace("_", " ")} orchard`,
         score,
+        scoreBounds:
+          climateKnown && !exclusions.length
+            ? {
+                lower: Math.floor(total / expectedWeight),
+                upper: Math.ceil(
+                  (total + (expectedWeight - weights) * 100) / expectedWeight,
+                ),
+                scope:
+                  "Unmeasured screening factors can take any value; not a confidence interval",
+                excludesCriticalChecks: criticalMissing,
+              }
+            : null,
+        evidenceCoverage: {
+          knownFactors,
+          totalFactors: water === false ? 6 : 7,
+          weightedPct: Math.round((100 * weights) / expectedWeight),
+        },
+        criticalMissing,
+        rankingEligible: false, // No field-calibrated crop comparison model yet.
         status,
         fit:
           status === "not_suitable"
@@ -137,10 +182,9 @@ function scoreCropProfiles(profiles, { form, result, apiInsights = {} }) {
         reasons: [],
         tips: [],
         source: "local-agronomy-rules",
-        profileVersion: "tn-screening-1",
+        profileVersion: "tn-screening-2",
       };
     })
-    .sort((a, b) => (b.score ?? -1) - (a.score ?? -1))
-    .map((crop, index) => ({ ...crop, rank: index + 1 }));
+    .sort((a, b) => a.cropKey.localeCompare(b.cropKey));
 }
 module.exports = { scoreCropProfiles };

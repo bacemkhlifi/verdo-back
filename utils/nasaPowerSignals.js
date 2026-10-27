@@ -2,7 +2,20 @@ const NASA_POWER_CLIMATOLOGY_URL =
   "https://power.larc.nasa.gov/api/temporal/climatology/point";
 
 const TIMEOUT_MS = 12000;
-const MONTHS = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
+const MONTHS = [
+  "JAN",
+  "FEB",
+  "MAR",
+  "APR",
+  "MAY",
+  "JUN",
+  "JUL",
+  "AUG",
+  "SEP",
+  "OCT",
+  "NOV",
+  "DEC",
+];
 
 const fetchJson = async (url, timeoutMs = TIMEOUT_MS) => {
   const controller = new AbortController();
@@ -28,7 +41,8 @@ const toNumber = (value) => {
   return number;
 };
 
-const formatMonth = (monthKey) => monthKey.slice(0, 1) + monthKey.slice(1).toLowerCase();
+const formatMonth = (monthKey) =>
+  monthKey.slice(0, 1) + monthKey.slice(1).toLowerCase();
 
 const parseParameterSeries = (parameterMap, key) => {
   const values = parameterMap?.[key];
@@ -56,12 +70,16 @@ const sum = (values) => {
 
 const maxEntry = (entries) => {
   if (!entries.length) return null;
-  return entries.reduce((best, entry) => (entry.value > best.value ? entry : best));
+  return entries.reduce((best, entry) =>
+    entry.value > best.value ? entry : best,
+  );
 };
 
 const minEntry = (entries) => {
   if (!entries.length) return null;
-  return entries.reduce((best, entry) => (entry.value < best.value ? entry : best));
+  return entries.reduce((best, entry) =>
+    entry.value < best.value ? entry : best,
+  );
 };
 
 const classifyClimate = (annualRainMm, meanTempC) => {
@@ -86,7 +104,7 @@ const getNasaPowerSignals = async (lat, lon) => {
       "WS10M",
       "PS",
       "T2MDEW",
-    ].join(",")
+    ].join(","),
   );
   url.searchParams.set("community", "AG");
   url.searchParams.set("longitude", String(lon));
@@ -105,17 +123,25 @@ const getNasaPowerSignals = async (lat, lon) => {
   const rainfallRates = parseParameterSeries(parameterMap, "PRECTOTCORR");
   const daysInMonth = [31, 28.25, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
   const rainUnits = payload?.parameters?.PRECTOTCORR?.units;
-  const rainfall = rainUnits === "mm/day" ? rainfallRates.map(item => ({
-    ...item, value: item.value * daysInMonth[MONTHS.indexOf(item.month)],
-  })) : [];
+  const rainfall =
+    rainUnits === "mm/day"
+      ? rainfallRates.map((item) => ({
+          ...item,
+          value: item.value * daysInMonth[MONTHS.indexOf(item.month)],
+        }))
+      : [];
   const humidity = parseParameterSeries(parameterMap, "RH2M");
   const solar = parseParameterSeries(parameterMap, "ALLSKY_SFC_SW_DWN");
   const wind = parseParameterSeries(parameterMap, "WS10M");
   const pressure = parseParameterSeries(parameterMap, "PS");
   const dewPoint = parseParameterSeries(parameterMap, "T2MDEW");
 
-  const annualRainMm = rainfall.length === 12 ? sum(rainfall.map((item) => item.value)) : null;
-  const meanTempC = average(temperature.map((item) => item.value));
+  const annualRainMm =
+    rainfall.length === 12 ? sum(rainfall.map((item) => item.value)) : null;
+  const meanTempC =
+    temperature.length === 12
+      ? average(temperature.map((item) => item.value))
+      : null;
   const hottestMonth = maxEntry(temperatureMax);
   const coldestMonth = minEntry(temperatureMin);
   const wettestMonth = maxEntry(rainfall);
@@ -129,6 +155,10 @@ const getNasaPowerSignals = async (lat, lon) => {
   return {
     provider: "nasa-power",
     free: true,
+    period:
+      payload.header?.start && payload.header?.end
+        ? `${payload.header.start}..${payload.header.end}`
+        : null,
     dataSources: ["NASA POWER Climatology API"],
     climate: {
       classification: classifyClimate(annualRainMm, meanTempC),
@@ -147,12 +177,27 @@ const getNasaPowerSignals = async (lat, lon) => {
       dewPointMonthly: dewPoint,
     },
     summary: {
-      hottestMonth: hottestMonth ? { month: formatMonth(hottestMonth.month), value: hottestMonth.value } : null,
-      coldestMonth: coldestMonth ? { month: formatMonth(coldestMonth.month), value: coldestMonth.value } : null,
-      wettestMonth: wettestMonth ? { month: formatMonth(wettestMonth.month), value: wettestMonth.value } : null,
-      driestMonth: driestMonth ? { month: formatMonth(driestMonth.month), value: driestMonth.value } : null,
-      humidMonth: humidMonth ? { month: formatMonth(humidMonth.month), value: humidMonth.value } : null,
-      solarPeakMonth: solarPeakMonth ? { month: formatMonth(solarPeakMonth.month), value: solarPeakMonth.value } : null,
+      hottestMonth: hottestMonth
+        ? { month: formatMonth(hottestMonth.month), value: hottestMonth.value }
+        : null,
+      coldestMonth: coldestMonth
+        ? { month: formatMonth(coldestMonth.month), value: coldestMonth.value }
+        : null,
+      wettestMonth: wettestMonth
+        ? { month: formatMonth(wettestMonth.month), value: wettestMonth.value }
+        : null,
+      driestMonth: driestMonth
+        ? { month: formatMonth(driestMonth.month), value: driestMonth.value }
+        : null,
+      humidMonth: humidMonth
+        ? { month: formatMonth(humidMonth.month), value: humidMonth.value }
+        : null,
+      solarPeakMonth: solarPeakMonth
+        ? {
+            month: formatMonth(solarPeakMonth.month),
+            value: solarPeakMonth.value,
+          }
+        : null,
       classification: classifyClimate(annualRainMm, meanTempC),
     },
     notes: [
